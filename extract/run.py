@@ -86,21 +86,21 @@ def run(out_dir: Path, expected: int = EXPECTED_SECRETS) -> dict:
                     _route(Sighting(s.canonical, s.raw, s.how_found,
                                     row["url"], sha, ruled_out=s.ruled_out),
                            strict, needs_review, ruled_out)
-            for s in rep.needs_review:
-                needs_review.append(s)
-            # OCR consensus + hex-repair (automated, design-corrected): agreeing
-            # OCR variants merge into a STRICT candidate via the confusion-class
-            # map; the write-back updates the image ruling so the audit trail
-            # never shows a recovered image as unresolved (M6 report bug 1).
+            # OCR consensus + hex-repair FIRST: if the passes merge to a STRICT
+            # candidate, the raw per-pass OCR reads are resolved evidence, not
+            # open needs-review entries (M6 report bug 1 — write-back).
             merged, how = _ocr_consensus(rep)
             if merged:
                 for row in group:
                     _route(Sighting(merged, merged.encode(), how, row["url"], sha),
                            strict, needs_review, ruled_out)
-                # Write back: this image yielded a secret — it is NOT unresolved.
+                # This image yielded a secret — it is NOT unresolved.
                 rep.ruling = "payload-found"
+                # Drop the raw OCR reads the consensus just resolved.
                 rep.needs_review = [s for s in rep.needs_review
-                                    if not s.raw.startswith(b"FRAGMENT:")]
+                                    if not s.how_found.startswith("img_ocr:")]
+            for s in rep.needs_review:
+                _route(s, strict, needs_review, ruled_out)  # ruled_out fragments diverted
             image_reports.append(rep)
 
         surfaces = extract_blob(ct, body)

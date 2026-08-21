@@ -54,6 +54,15 @@ class TestPatterns(unittest.TestCase):
         self.assertEqual(hits[0].ruled_out, "")
         self.assertTrue(hits[0].strict)
 
+    def test_bare_hex_fragment_ruled_out(self):
+        # A bare 16-hex string with no VISUALPING{} wrapper (JPEG comment decoy)
+        # is ruled not-a-secret — the secret form requires the wrapper.
+        from extract.core import exclusion_reason
+        self.assertEqual(exclusion_reason(b"FRAGMENT:5a6b01d97bfffdc3", None),
+                         "bare_hex_fragment")
+        # and a real canonical value is never ruled a fragment
+        self.assertIsNone(exclusion_reason(GOOD, "VISUALPING{0123456789abcdef}"))
+
 
 class TestHandlers(unittest.TestCase):
     def test_html_split_across_tags(self):

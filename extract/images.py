@@ -35,7 +35,7 @@ import numpy as np
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo  # noqa: F401  (keeps plugin import explicit)
 
-from .core import LOOSE, STRICT, Sighting, canonicalize
+from .core import LOOSE, STRICT, Sighting, canonicalize, exclusion_reason
 
 # OCR is optional: the design deferred it, and it only runs when pytesseract
 # AND the tesseract binary are both present. Absent either, OCR surfaces are
@@ -409,12 +409,15 @@ def analyze_image(body: bytes, *, url: str, sha256: str,
                 rep.sightings.append(s)
             else:
                 rep.needs_review.append(s)
-        # A bare 16-hex fragment (no VISUALPING{} wrapper) is a finding, not
-        # silence — route to needs-review for a documented ruling.
+        # A bare 16-hex fragment (no VISUALPING{} wrapper) is recorded but
+        # ruled not-a-secret: the secret form requires the wrapper, so a bare
+        # hex string is a decoy / staging artifact. Ruled out, not needs-review.
         for m in re.finditer(rb"(?<![0-9a-f])[0-9a-f]{16}(?![0-9a-f])", raw):
+            frag = b"FRAGMENT:" + m.group(0)
             rep.needs_review.append(Sighting(
-                canonical=None, raw=b"FRAGMENT:" + m.group(0),
-                how_found=how + ":bare_hex16", url=url, sha256=sha256))
+                canonical=None, raw=frag,
+                how_found=how + ":bare_hex16", url=url, sha256=sha256,
+                ruled_out=exclusion_reason(frag, None) or ""))
 
     for field, value in extract_metadata_text(img, body).items():
         rep.metadata_text[field] = value if isinstance(value, str) else repr(value)

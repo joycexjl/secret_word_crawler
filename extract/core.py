@@ -39,6 +39,12 @@ def exclusion_reason(raw: bytes, canonical: str | None) -> str | None:
     # Format-description prose: braces contain words/commas, not hex.
     if canonical is None and b"hexadecimal" in raw.lower():
         return "format_prose"
+    # Bare 16-hex fragments with no VISUALPING{} wrapper (e.g. JPEG comment
+    # fields holding a bare hex string). Ruled not-a-secret by human ruling:
+    # the secret form requires the VISUALPING{} wrapper; a bare hex fragment is
+    # a decoy / staging artifact, not a candidate.
+    if canonical is None and raw.startswith(b"FRAGMENT:"):
+        return "bare_hex_fragment"
     return None
 
 _HEX16 = re.compile(r"^[0-9a-f]{16}$")

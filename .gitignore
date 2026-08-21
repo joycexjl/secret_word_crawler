@@ -38,3 +38,8 @@ playwright-report/
 .env
 .env.*
 !.env.example
+/images
+
+# Run logs — tee'd crawl output can contain fetched site content
+crawl.log
+*.log
