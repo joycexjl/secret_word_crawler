@@ -82,6 +82,15 @@ INIT_SCRIPT = r"""
     return origAttach.call(this, init);
   };
 
+  // Service worker registration (ADR 0002): record the call site as a
+  // discovery intent. The worker is registered for real — it's in-scope,
+  // and blocking it would be a crawl-visible behavior change — but the
+  // precache inventory is read out of sw.js source text, never executed.
+  try {
+    const origReg = navigator.serviceWorker.register.bind(navigator.serviceWorker);
+    navigator.serviceWorker.register = (u, ...rest) => { record('sw_register', u); return origReg(u, ...rest); };
+  } catch (e) {}
+
   const mo = new MutationObserver(() => {
     if (window.__snapshotTaken) window.__lateMutations++;
   });
@@ -311,7 +320,8 @@ TIER0_HARVEST_JS = r"""
   ];
   const TAGHOW = {A:'a_href', AREA:'area_href', IMG:'img_src', SCRIPT:'script_src',
                   IFRAME:'iframe_src', EMBED:'embed_src', OBJECT:'object_data',
-                  LINK:'link_rel', SOURCE:'picture_source', FORM:'form_action'};
+                  LINK:'link_rel', SOURCE:'picture_source', FORM:'form_action',
+                  TRACK:'track_src', VIDEO:'video_src', AUDIO:'audio_src'};
 
   const push = (ref, how, hint) => { if (ref) out.urls.push({ref, how, hint}); };
 
@@ -333,7 +343,11 @@ TIER0_HARVEST_JS = r"""
           continue;
         }
         const useHow = (attr === 'src' || attr === 'href' || attr === 'data') && TAGHOW[tag] ? TAGHOW[tag] : how;
-        push(v, useHow, (el.textContent || '').trim().slice(0, 80));
+        // <link> has no text content; the rel value IS the hint — rel=alternate
+        // vs rel=icon is exactly the distinction the report should show.
+        const hint = tag === 'LINK' ? (el.getAttribute('rel') || '')
+                                    : (el.textContent || '').trim().slice(0, 80);
+        push(v, useHow, hint);
       }
       const style = el.getAttribute('style');
       if (style && /url\s*\(/.test(style)) {

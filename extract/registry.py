@@ -128,6 +128,34 @@ def _surfaces_text(body: bytes) -> list[tuple[str, bytes]]:
     return [("raw", body)]
 
 
+def _surfaces_sourcemap(body: bytes) -> list[tuple[str, bytes]]:
+    """Sourcemap (ADR 0002): one surface per `sourcesContent` entry, tagged
+    with the carrier path — the original pre-bundle file name is part of the
+    provenance. Entries are scanned raw: the canonical form is caught wherever
+    it sits, and recursive type-dispatch into entry contents would multiply
+    how_found complexity for no new coverage. Keyed on URL extension, so this
+    fires even when the server mislabels the map as application/json (the JSON
+    walker would shred the blob into one surface per string)."""
+    out: list[tuple[str, bytes]] = []
+    try:
+        data = json.loads(body.decode("utf-8", errors="replace"))
+    except Exception:
+        out.append(("raw", body))
+        return out
+    contents = data.get("sourcesContent") if isinstance(data, dict) else None
+    if not isinstance(contents, list):
+        out.append(("raw", body))
+        return out
+    sources = data.get("sources") or []
+    for i, entry in enumerate(contents):
+        if not isinstance(entry, str):
+            continue
+        carrier = sources[i] if i < len(sources) and isinstance(sources[i], str) else f"sourcesContent[{i}]"
+        out.append((f"sourcemap:{carrier}", entry.encode("utf-8", errors="replace")))
+    out.append(("raw", body))  # the map itself: mappings names, sourceRoot, etc.
+    return out
+
+
 # Long enough to be payload, short enough to catch a 28-byte secret (38-char
 # run + padding). Padding is part of the match so decode sees the full blob.
 _B64_BLOB = re.compile(rb"[A-Za-z0-9+/]{32,}={0,2}")
@@ -181,11 +209,14 @@ EXTRACTORS: list[tuple[str, callable]] = [
     ("image/svg+xml", _surfaces_xml),
     ("text/csv", _surfaces_csv),
     ("text/plain", _surfaces_text),
+    ("text/vtt", _surfaces_text),  # WebVTT subtitle files are pure text
     # image/*, application/pdf: M5 (metadata + pixel sweep; OCR deferred).
 ]
 
 
-def handler_for(content_type: str):
+def handler_for(content_type: str, url_ext: str = ""):
+    if url_ext == "map":
+        return _surfaces_sourcemap
     for prefix, fn in EXTRACTORS:
         if content_type.startswith(prefix):
             return fn
@@ -220,11 +251,13 @@ def _pdf_text_layer(body: bytes) -> list[tuple[str, bytes]]:
     return out
 
 
-def extract_blob(content_type: str, body: bytes) -> list[tuple[str, bytes]]:
+def extract_blob(content_type: str, body: bytes, url_ext: str = "") -> list[tuple[str, bytes]]:
     """All text surfaces for a blob: its type handler plus decoded variants
-    (decoding is content-type-agnostic — a base64 blob can live anywhere)."""
+    (decoding is content-type-agnostic — a base64 blob can live anywhere).
+    url_ext routes .map blobs to the sourcemap handler regardless of the
+    declared content-type."""
     surfaces: list[tuple[str, bytes]] = []
-    handler = handler_for(content_type)
+    handler = handler_for(content_type, url_ext)
     if handler is not None:
         surfaces.extend(handler(body))
     surfaces.extend(_surfaces_decoded(body))

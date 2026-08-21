@@ -117,3 +117,22 @@ histogram flattening is a completeness detector, not a guardrail.
 One blob served at multiple URLs, or one URL referenced by multiple pages.
 Both are reported in a dedicated section keyed by sha256; the two shapes are
 distinguished (deliberate duplication is an authorial signal).
+
+### Link-bearing surface
+Any place a URL can hide besides an `<a href>`: a `sourceMappingURL` comment,
+CSS `url()`/`@import`, non-anchor HTML attributes (`<track src>`, `<link>`,
+`<meta http-equiv="refresh">`, …), JS string constants and navigation calls,
+HTTP response headers (`Link:` structurally, all others pattern-scanned), and
+URL-valued JSON fields (`start_url`, `icons[].src`, a sourcemap's `sources`
+array). All emit edges into the same [[frontier]] under the same tier
+discipline and the same fixpoint — no source gets its own fetch policy.
+Service workers are treated statically: the registration call is recorded
+(`how=sw_register`), `sw.js` is fetched as bytes, and its precache list is
+read out of the source text, never executed.
+
+### Carrier path
+The original file path of a sourcemap `sourcesContent` entry
+(e.g. `webpack://./src/admin/config.js`). When a secret is found in
+pre-bundle source, the carrier path is part of the sighting's provenance —
+"which original file carried it" — recorded in the surface tag rather than
+as a URL.

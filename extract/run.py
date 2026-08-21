@@ -64,8 +64,9 @@ def run(out_dir: Path, expected: int = EXPECTED_SECRETS) -> dict:
     # -- body extraction, once per unique blob, fanned out to carrier rows ---
     for sha, group in by_hash.items():
         ct = group[0]["content_type"]
+        url_ext = group[0].get("url_ext", "")
         body = (out_dir / "blobs" / sha).read_bytes()
-        if handler_for(ct) is None:
+        if handler_for(ct, url_ext) is None:
             unhandled.append(ct)
             log.warning("no extractor for %s (%s)", ct, group[0]["url"])
         log.debug("extract %s (%s, %d bytes, %d row(s))", sha[:8], ct, len(body), len(group))
@@ -103,7 +104,7 @@ def run(out_dir: Path, expected: int = EXPECTED_SECRETS) -> dict:
                 _route(s, strict, needs_review, ruled_out)  # ruled_out fragments diverted
             image_reports.append(rep)
 
-        surfaces = extract_blob(ct, body)
+        surfaces = extract_blob(ct, body, url_ext=url_ext)
         for sub, data in surfaces:
             for row in group:
                 for s in scan_text(data, how_found=f"{ct}:{sub}",

@@ -20,7 +20,7 @@ EXTRACT_HANDLERS = {
     "text/html", "text/css", "application/javascript", "text/javascript",
     "application/json", "application/xml", "text/xml", "text/csv",
     "image/svg+xml", "image/png", "image/jpeg", "image/gif", "image/webp",
-    "application/pdf", "text/plain",
+    "application/pdf", "text/plain", "text/vtt", "application/manifest+json",
 }
 
 # Blocked-notice detection (design §5): a 200 whose body is a policy block or
@@ -86,7 +86,10 @@ def build_filetype_inventory(rows: list[dict]) -> list[dict]:
             "count": len(group),
             "bytes": sum(g.get("length", 0) for g in group),
             "examples": [g["url"] for g in group[:3]],
-            "has_extractor": ct in EXTRACT_HANDLERS,
+            # .map blobs have a dedicated extractor keyed on URL extension
+            # (ADR 0002), whatever content-type the server declared.
+            "has_extractor": ct in EXTRACT_HANDLERS
+            or any(g.get("url_ext") == "map" for g in group),
         })
     return inventory
 

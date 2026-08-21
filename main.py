@@ -30,7 +30,12 @@ from pathlib import Path
 log = logging.getLogger("crawl")
 
 from crawl.browser import CrawlBrowser
-from crawl.discover import in_scope_hits, scan_bytes
+from crawl.discover import (
+    in_scope_hits,
+    scan_bytes,
+    scan_header_values,
+    scan_json_values,
+)
 from crawl.frontier import Frontier
 from crawl.graph import EdgeStore, bfs_depths, export_dot, load_edges
 from crawl.normalize import ScopeTriple, canon_key, in_scope
@@ -141,6 +146,7 @@ def main() -> int:
     redirect_outs: list[dict] = []
     needs_review_urls: set[str] = set()
     scanned_blobs: set[str] = set()  # sha256 already byte-scanned
+    scanned_headers: set[str] = set()  # canon keys whose headers are link-scanned
 
     with CrawlBrowser(
         scope, username, password, delay_range=CONFIG["delay_range"]
@@ -254,33 +260,67 @@ def main() -> int:
                         "retries": frontier.retries_used(canon),
                     })
 
-            # Byte-scan phase: discover URLs hidden in non-HTML bytes.
+            # Byte-scan phase: discover URLs hidden in non-HTML bytes, plus
+            # the offline scanners (ADR 0002): response-header links and
+            # URL-valued JSON strings. All emit into the same frontier under
+            # the same fixpoint.
             log.info("── byte-scan phase (round %d): %d blob(s) already scanned",
                      round_no, len(scanned_blobs))
             new_from_scan = 0
             blobs_this_round = 0
+
+            def enqueue_scan_hit(row: dict, hit) -> None:
+                nonlocal new_from_scan
+                hit_canon = canon_key(hit.verbatim)
+                if hit_canon in frontier.seen:
+                    return
+                how = hit.how or "regex_fallback"
+                hint = hit.hint or (f"tier{hit.tier}" if not hit.how else "")
+                edges.write(src=row["canon_key"], dst=hit_canon,
+                            how=how, hint=hint,
+                            depth=row.get("first_seen_depth", 0))
+                frontier.add(hit_canon, hit.verbatim,
+                             row.get("first_seen_depth", 0) + 1)
+                new_from_scan += 1
+                log.info("  scan found (%s): %s", how, hit.verbatim)
+
             for row_path in [out_dir / "manifest.jsonl"]:
                 for line in row_path.read_text().splitlines():
                     if not line.strip():
                         continue
                     row = json.loads(line)
                     sha = row.get("sha256")
-                    if not sha or sha in scanned_blobs:
+                    if not sha:
+                        continue
+
+                    # Header-borne links (ADR 0002): Link: parsed structurally,
+                    # all other header values pattern-scanned. Once per row.
+                    row_canon = row.get("canon_key", row["url"])
+                    if row_canon not in scanned_headers:
+                        scanned_headers.add(row_canon)
+                        for hit in scan_header_values(row.get("headers", {}),
+                                                      row["url"]):
+                            if in_scope(hit.verbatim, scope):
+                                enqueue_scan_hit(row, hit)
+
+                    if sha in scanned_blobs:
                         continue
                     scanned_blobs.add(sha)
                     blobs_this_round += 1
-                    scan = scan_bytes(store.get(sha), row["url"], scope)
+                    blob = store.get(sha)
+                    scan = scan_bytes(blob, row["url"], scope)
                     needs_review_urls.update(scan.needs_review)
                     for hit in in_scope_hits(scan, scope):
-                        hit_canon = canon_key(hit.verbatim)
-                        if hit_canon not in frontier.seen:
-                            edges.write(src=row["canon_key"], dst=hit_canon,
-                                        how="regex_fallback", hint=f"tier{hit.tier}",
-                                        depth=row.get("first_seen_depth", 0))
-                            frontier.add(hit_canon, hit.verbatim,
-                                         row.get("first_seen_depth", 0) + 1)
-                            new_from_scan += 1
-                            log.info("  byte-scan found (tier%d): %s", hit.tier, hit.verbatim)
+                        enqueue_scan_hit(row, hit)
+
+                    # URL-valued JSON strings (ADR 0002): web manifests,
+                    # sourcemap `sources` arrays, any config.json.
+                    if row.get("content_type", "").startswith(
+                            ("application/json", "application/manifest+json")
+                    ) or row.get("url_ext") in ("json", "map", "webmanifest"):
+                        for hit in scan_json_values(blob, row["url"]):
+                            if in_scope(hit.verbatim, scope):
+                                enqueue_scan_hit(row, hit)
 
             log.info("── round %d done: %d blob(s) scanned, %d new URL(s) from byte-scan, "
                      "%d pending", round_no, blobs_this_round, new_from_scan, frontier.pending)
