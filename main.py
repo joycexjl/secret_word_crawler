@@ -45,6 +45,7 @@ from crawl.report import (
     write_filetypes_md,
 )
 from crawl.store import BlobStore, Manifest, make_record
+from crawl.envfile import load_dotenv
 
 CONFIG = {
     "scope": ScopeTriple("http", "54.214.7.161", 80),
@@ -95,12 +96,13 @@ def main() -> int:
         datefmt="%H:%M:%S",
         stream=sys.stderr,
     )
+    load_dotenv()  # .env fills VISUALPING_USER/PASS unless already in env
     username = os.environ.get(CONFIG["username_env"])
     password = os.environ.get(CONFIG["password_env"])
     if not username or not password:
         print(
             f"credentials missing: set {CONFIG['username_env']} and "
-            f"{CONFIG['password_env']} in the environment",
+            f"{CONFIG['password_env']} in the environment or in .env",
             file=sys.stderr,
         )
         return 2
