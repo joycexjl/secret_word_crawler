@@ -1,4 +1,4 @@
-"""Unit tests for M4: extraction core, handlers, fan-out, disqualification."""
+"""Unit tests for M4: extraction core, handlers, fan-out, header scanning."""
 
 import base64
 import json
@@ -36,6 +36,23 @@ class TestPatterns(unittest.TestCase):
         hits = scan_text(b"VISUALPING{not-a-secret}", how_found="t", url="u", sha256="s")
         self.assertEqual(len(hits), 1)
         self.assertIsNone(hits[0].canonical)
+
+    def test_worked_example_ruled_out(self):
+        # The index page's worked example is explicitly "not one of the eight".
+        hits = scan_text(b"VISUALPING{0000deadbeef0000}", how_found="t", url="u", sha256="s")
+        self.assertEqual(hits[0].ruled_out, "worked_example")
+        self.assertFalse(hits[0].strict)  # ruled-out is not counted as strict
+
+    def test_format_prose_ruled_out(self):
+        # "the literal string VISUALPING{, sixteen hexadecimal characters, then }"
+        hits = scan_text(b"VISUALPING{, sixteen hexadecimal characters, then }",
+                         how_found="t", url="u", sha256="s")
+        self.assertEqual(hits[0].ruled_out, "format_prose")
+
+    def test_real_secret_not_ruled_out(self):
+        hits = scan_text(GOOD, how_found="t", url="u", sha256="s")
+        self.assertEqual(hits[0].ruled_out, "")
+        self.assertTrue(hits[0].strict)
 
 
 class TestHandlers(unittest.TestCase):
@@ -102,18 +119,23 @@ class TestHandlers(unittest.TestCase):
         self.assertEqual(handler_for("image/png")(b"\x89PNG"), [])
 
 
-class TestHeaderDisqualification(unittest.TestCase):
-    def test_header_match_disqualified(self):
-        headers = {"x-staging-secret": GOOD.decode()}
+class TestHeaderScanning(unittest.TestCase):
+    def test_header_match_counts_as_candidate(self):
+        # The disqualification rule was removed: a header STRICT match is a
+        # candidate secret, provenance preserved via how_found.
+        headers = {"x-provisioning-note": GOOD.decode()}
         hits = scan_headers(headers, url="u", sha256="s")
         self.assertEqual(len(hits), 1)
-        self.assertTrue(hits[0].disqualified)
-        self.assertEqual(hits[0].disqualified_reason, "header_rule")
+        self.assertTrue(hits[0].strict)
+        self.assertFalse(hits[0].disqualified)
+        self.assertEqual(hits[0].how_found, "header:x-provisioning-note")
+        self.assertEqual(hits[0].canonical, "VISUALPING{0123456789abcdef}")
 
     def test_cookie_scanned(self):
         headers = {"set-cookie": "secret=" + GOOD.decode()}
         hits = scan_headers(headers, url="u", sha256="s")
         self.assertEqual(len(hits), 1)
+        self.assertTrue(hits[0].strict)
 
 
 class TestRunnerFanOut(unittest.TestCase):

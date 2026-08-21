@@ -52,12 +52,31 @@ CONFIG = {
     "username_env": "VISUALPING_USER",
     "password_env": "VISUALPING_PASS",
     "delay_range": (0.25, 0.5),
-    "max_resources": 500,
+    # Global cap raised 500 -> 2000 (locked in M6 grilling): 500 fired and left
+    # pages unfetched, invalidating the fixpoint completeness argument. The
+    # per-template cap (60) is what bounds the unbounded /report/?page=N flood;
+    # politeness is the serial 250-500ms delay, not the global ceiling. The
+    # coverage report records loudly if even 2000 caps out.
+    "max_resources": 2000,
     "per_template_cap": 60,
     "expected_secrets": 8,
     "tier2_enabled": True,  # Tier 2 interaction itself lands after M2
     "out_dir": Path(__file__).parent / "out",
 }
+
+# Declared-but-possibly-unlinked paths (M6 grilling): robots.txt Disallow
+# entries map no-inbound-link pages; sitemap/manifest/humans/security.txt and
+# the 404 handler are classic declared surfaces. Seeded into the frontier so
+# the crawl reaches them even if nothing links to them. The byte-scan reads
+# their contents for further paths.
+DECLARED_PATH_SEEDS = [
+    "/robots.txt",
+    "/sitemap.xml",
+    "/manifest.json",
+    "/humans.txt",
+    "/.well-known/security.txt",
+    "/favicon.ico",
+]
 
 
 def is_expandable(record: dict) -> bool:
@@ -107,6 +126,15 @@ def main() -> int:
     seed = CONFIG["seed_url"]
     root_canon = canon_key(seed)
     frontier.add(root_canon, seed, depth=0)
+    # Declared-path seeds (robots/sitemap/manifest/etc.): reachable even if no
+    # page links to them. Recorded as edges from the root with how=seed.
+    for path in DECLARED_PATH_SEEDS:
+        url = f"http://{scope.host}{path}"
+        if in_scope(url, scope):
+            frontier.add(canon_key(url), url, depth=1)
+            edges.write(src=root_canon, dst=canon_key(url), how="seed",
+                        hint="declared-path", depth=0)
+    log.info("seeded %d declared-path candidates", len(DECLARED_PATH_SEEDS))
 
     redirect_outs: list[dict] = []
     needs_review_urls: set[str] = set()

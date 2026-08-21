@@ -229,8 +229,10 @@ def write_coverage_md(
     lines.append("### Redirect-outs (redirects to out-of-scope targets, for manual ruling)")
     lines += [f"- {r['from']} → {r['to']}" for r in redirect_outs] or ["_None._"]
     lines.append("")
-    lines.append(f"### Disqualified sightings (header/cookie rule)")
-    lines.append(f"{disqualified_header_sightings} header/cookie matches excluded per challenge rules.")
+    lines.append(f"### Header/cookie sightings")
+    lines.append("Header/cookie matches are **counted** as candidate secrets (the "
+                 "disqualification rule was removed); see `extraction.md`. "
+                 f"{disqualified_header_sightings} recorded here for the crawl-phase ledger.")
     lines.append("")
 
     lines.append("## Duplication (keyed by sha256)")

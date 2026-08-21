@@ -84,6 +84,14 @@ def scan_bytes(body: bytes, base_url: str, scope: ScopeTriple) -> ScanResult:
         if ref.startswith(("http://", "https://", "/")):
             continue  # already covered by tiers 1–2
         add(ref, 3, hits)
+    # Declared paths in robots/sitemap-style files: "Disallow: /path",
+    # "Allow: /path", "<loc>/path</loc>" — bare declarations, not quoted URLs,
+    # so the tiered patterns miss them (M6 grilling: robots Disallow maps
+    # no-inbound-link pages).
+    for m in re.finditer(r"(?im)^\s*(?:Disallow|Allow)\s*:\s*(/\S*)", text):
+        add(m.group(1), 2, hits)
+    for m in re.finditer(r"<loc>\s*(https?://[^<]+|/[^<]+?)\s*</loc>", text, re.I):
+        add(m.group(1), 2, hits)
 
     needs_review: list[str] = []
     for m in _BARE_REL.finditer(text):

@@ -57,6 +57,22 @@ class TestPlaneFit(unittest.TestCase):
         n = fit_ramp_residual(arr)
         self.assertGreater(n, 0)  # anomaly located, not guessed
 
+    def test_fit_ramp_verdict_on_clean_ramp(self):
+        from extract.images import fit_ramp
+        v = fit_ramp(make_ramp())
+        self.assertTrue(v["is_ramp"])
+        self.assertEqual(v["deviating_px"], 0)
+
+    def test_fit_ramp_verdict_on_non_ramp(self):
+        from extract.images import fit_ramp
+        import numpy as np
+        rng = np.random.default_rng(7)
+        noise = rng.integers(0, 255, (48, 48, 3), dtype=np.uint8)
+        v = fit_ramp(noise)
+        self.assertFalse(v["is_ramp"])
+        self.assertEqual(v["deviating_px"], -1)  # N/A, not a scary count
+        self.assertIn("not a ramp", v["explanation"])
+
 
 class TestSweep(unittest.TestCase):
     def test_recovers_direct_ascii_payload(self):
@@ -79,7 +95,8 @@ class TestSweep(unittest.TestCase):
                                 sha256="y" * 64, sweep_log=Path(td) / "sweep.jsonl")
             self.assertEqual(rep.ruling, "swept-and-clean")
             self.assertEqual(rep.candidates_with_hits, 0)
-            self.assertEqual(rep.deviating_pixels, 0)
+            self.assertTrue(rep.ramp_fit["is_ramp"])
+            self.assertEqual(rep.ramp_fit["deviating_px"], 0)
 
     def test_candidate_space_is_enumerable(self):
         img = Image.fromarray(make_ramp(16, 16))

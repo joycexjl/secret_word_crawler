@@ -126,10 +126,17 @@ def build_submission(out: Path) -> str:
             for d in secrets["divergences"]:
                 L.append(f"- `{d['canonical']}` — **{d['corpus']}** on {d['url']}: {d['note']}")
             L.append("")
-        L.append(f"**Disqualified sightings:** {secrets['disqualified_count']} header/cookie "
-                 "match(es) — staging placeholders per the challenge rules, recorded and "
-                 "reported but excluded from the count.")
-        L.append("")
+        header_sightings = [s for ss in secrets["secrets"].values() for s in ss
+                            if s["how_found"].startswith("header:")]
+        if header_sightings:
+            L.append(f"**Header/cookie secrets counted:** {len(header_sightings)} sighting(s) "
+                     "found in response headers/cookies (the disqualification rule was removed); "
+                     "provenance shown as `header:<name>` in the table above.")
+            L.append("")
+        if secrets.get("ruled_out"):
+            L.append("**Ruled out (not counted):** " +
+                     ", ".join(f"`{ro['raw'][:32]}` ({ro['reason']})" for ro in secrets["ruled_out"]))
+            L.append("")
         if secrets["needs_review"]:
             L.append(f"⚠️ **Needs-review bucket: {len(secrets['needs_review'])}** entr(ies) — "
                      "each must exit via a documented ruling before the completeness claim stands.")
