@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Test / tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Crawl output — the entire evidence base is regenerable (design §11:
+# reproducibility over resumability; a full run is one command). Never commit
+# fetched site content or recovered secrets.
+out/
+
+# Playwright
+test-results/
+playwright-report/
+
+# OS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Secrets — credentials come from the environment, never the repo
+.env
+.env.*
+!.env.example
