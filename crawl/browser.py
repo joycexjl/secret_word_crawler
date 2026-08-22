@@ -27,6 +27,7 @@ attempted after the queue drains.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import random
@@ -144,6 +145,7 @@ class CrawlBrowser:
         delay_range: tuple[float, float] = (0.25, 0.5),
         get_only: bool = True,
         timeout_ms: int = 30_000,
+        proxy: dict | None = None,  # {"server", "username", "password"} — geo-bypass
     ):
         self.scope = scope
         self.username = username
@@ -152,6 +154,7 @@ class CrawlBrowser:
         self.delay_range = delay_range
         self.get_only = get_only
         self.timeout_ms = timeout_ms
+        self.proxy = proxy
 
         self.blocked_out_of_scope: list[str] = []
         self.blocked_mutations: list[dict] = []  # Tier 2 findings
@@ -164,12 +167,27 @@ class CrawlBrowser:
 
     def __enter__(self) -> "CrawlBrowser":
         self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(headless=True)
-        self._context = self._browser.new_context(
-            user_agent=self.user_agent,
-            http_credentials={"username": self.username, "password": self.password},
-            ignore_https_errors=False,
-        )
+        launch_kwargs: dict = {"headless": True}
+        if self.proxy:
+            launch_kwargs["proxy"] = self.proxy
+        self._browser = self._pw.chromium.launch(**launch_kwargs)
+        context_kwargs: dict = {
+            "user_agent": self.user_agent,
+            "http_credentials": {"username": self.username, "password": self.password},
+            "ignore_https_errors": False,
+        }
+        if self.proxy:
+            # Playwright's http_credentials does not answer the Basic Auth
+            # challenge on a proxied navigation (observed: 401 on goto through
+            # the Quarkip DE proxy, while the API request context answers fine).
+            # With a proxy configured, send the Authorization header explicitly
+            # on every in-scope request — the network-layer route interceptor
+            # (ADR 0001) already prevents it from leaving the target host.
+            token = base64.b64encode(
+                f"{self.username}:{self.password}".encode()
+            ).decode()
+            context_kwargs["extra_http_headers"] = {"Authorization": f"Basic {token}"}
+        self._context = self._browser.new_context(**context_kwargs)
         self._context.route("**/*", self._intercept)
         self._context.add_init_script(INIT_SCRIPT)
         return self

@@ -57,6 +57,13 @@ CONFIG = {
     "seed_url": "http://54.214.7.161/",
     "username_env": "VISUALPING_USER",
     "password_env": "VISUALPING_PASS",
+    # Optional geo-bypass proxy (env: PROXY_SERVER/PROXY_USER/PROXY_PASS).
+    # Set to reach geo-gated surfaces like /status/eu-region/ — the proxy
+    # changes the exit IP geography; all traffic still goes through the
+    # network-layer scope lock (ADR 0001).
+    "proxy_server_env": "PROXY_SERVER",
+    "proxy_user_env": "PROXY_USER",
+    "proxy_pass_env": "PROXY_PASS",
     "delay_range": (0.25, 0.5),
     # Global cap raised 500 -> 2000 (locked in M6 grilling): 500 fired and left
     # pages unfetched, invalidating the fixpoint completeness argument. The
@@ -112,6 +119,17 @@ def main() -> int:
         )
         return 2
 
+    # Optional geo-bypass proxy: all three vars must be present to activate.
+    proxy = None
+    proxy_server = os.environ.get(CONFIG["proxy_server_env"])
+    if proxy_server:
+        proxy = {
+            "server": proxy_server,
+            "username": os.environ.get(CONFIG["proxy_user_env"], ""),
+            "password": os.environ.get(CONFIG["proxy_pass_env"], ""),
+        }
+        log.info("geo-bypass proxy active: %s", proxy_server)
+
     out_dir: Path = CONFIG["out_dir"]
     if out_dir.exists() and any(out_dir.iterdir()):
         print(f"error: {out_dir} is not empty — no resume; clear it first", file=sys.stderr)
@@ -149,7 +167,7 @@ def main() -> int:
     scanned_headers: set[str] = set()  # canon keys whose headers are link-scanned
 
     with CrawlBrowser(
-        scope, username, password, delay_range=CONFIG["delay_range"]
+        scope, username, password, delay_range=CONFIG["delay_range"], proxy=proxy
     ) as browser:
 
         def record_edge(src_canon: str, dst_verbatim: str, how: str, hint: str, depth: int) -> None:

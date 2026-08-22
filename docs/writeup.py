@@ -137,6 +137,13 @@ def build_submission(out: Path) -> str:
             L.append("**Ruled out (not counted):** " +
                      ", ".join(f"`{ro['raw'][:32]}` ({ro['reason']})" for ro in secrets["ruled_out"]))
             L.append("")
+        if secrets.get("manual_sightings"):
+            L.append("**Manually recorded sightings** (outside the automated crawl — "
+                     "provenance stated, not hidden):")
+            L.append("")
+            for m in secrets["manual_sightings"]:
+                L.append(f"- `{m['secret']}` on {m['url']} — {m['note']}")
+            L.append("")
         if secrets["needs_review"]:
             L.append(f"⚠️ **Needs-review bucket: {len(secrets['needs_review'])}** entr(ies) — "
                      "each must exit via a documented ruling before the completeness claim stands.")
@@ -156,7 +163,8 @@ def build_submission(out: Path) -> str:
         L.append("| image | format | deviating px | candidates | ruling |")
         L.append("|---|---|---|---|---|")
         for im in secrets["images"]:
-            L.append(f"| {im['url']} | {im['format']} | {im['deviating_pixels']} | "
+            deviating = im.get("ramp_fit", {}).get("deviating_px", "?")
+            L.append(f"| {im['url']} | {im['format']} | {deviating} | "
                      f"{im['candidates_tried']} | {im['ruling']} |")
         L.append("")
 
@@ -189,10 +197,11 @@ def build_submission(out: Path) -> str:
     L.append("- **Template truncations** — any per-template cap that fired (e.g. unbounded "
              "`/report/?page=N` pagination), listed as bounded-coverage admissions.")
     L.append("- **Blocked notices** — e.g. the geo-gated `/status/eu-region/`: evidence gathered, "
-             "content unreachable from this network.")
+             "content unreachable from this network. Its secret was later recovered by a single "
+             "manual fetch through a DE exit proxy (recorded in §3); the crawl itself was not "
+             "re-run and this page remains a named coverage exception.")
     L.append("- **Terminal errors** — errored URLs with reasons; secrets behind them, if any, are "
              "outside this crawl's evidence.")
-    L.append("- **Disqualified sightings** — header/cookie matches excluded per challenge rules.")
     L.append("- **Redirect-outs** — redirects to out-of-scope targets, flagged for manual ruling.")
     L.append("")
     return "\n".join(L)
