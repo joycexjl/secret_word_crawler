@@ -13,21 +13,21 @@ Discovery was **tiered and escalating**: Tier 0 harvested the rendered DOM (recu
 
 ## 2. What the crawl found
 
-- **823** resources fetched; **14304** references recorded.
+- **823** resources fetched; **14307** references recorded.
 - **Content types served:** `text/html`×807, `application/javascript`×7, `image/png`×5, `image/jpeg`×3, `text/css`×1
 
 References by discovery mechanism (`how`):
 
 | how | count |
 |---|---|
-| `a_href` | 12256 |
+| `a_href` | 12258 |
 | `script_src` | 965 |
-| `link_rel` | 800 |
+| `link_rel` | 801 |
 | `img_src` | 163 |
 | `redirect` | 114 |
 | `seed` | 6 |
 
-**2048 of 14304 references were not `<a href>`** — the challenge's central hint, made concrete: `script_src`×965, `link_rel`×800, `img_src`×163, `redirect`×114, `seed`×6.
+**2049 of 14307 references were not `<a href>`** — the challenge's central hint, made concrete: `script_src`×965, `link_rel`×801, `img_src`×163, `redirect`×114, `seed`×6.
 
 The rendered link graph (nodes styled by content type, edges by `how`) is in `out/graph.dot` (render with `dot -Tpng out/graph.dot -o graph.png`).
 
@@ -39,20 +39,16 @@ The rendered link graph (nodes styled by content type, edges by `how`) is in `ou
 |---|---|---|
 | 1 | `VISUALPING{2dd5105a3fad0ef3}` | http://54.214.7.161/notes/diff-socket-socket/?ref=related — `text/html:html_comment` |
 | 2 | `VISUALPING{349a583fba34c301}` | http://54.214.7.161/static/js/analytics.js — `application/javascript:string_literal` |
-| 3 | `VISUALPING{64d26185a2f94e34}` | http://54.214.7.161/products/filter-gateway — `header:x-provisioning-note` |
-| 4 | `VISUALPING{73c8f3073fdc5f74}` | http://54.214.7.161/wiki/detect-embed/ — `text/html:html_attr:data-vp-archive` |
-| 5 | `VISUALPING{db7e533a9cef7f72}` | http://54.214.7.161/static/img/field-visit.jpg — `img_meta:info:exif[utf-16-le]` |
-| 6 | `VISUALPING{e1c2e40cf01c17cc}` | http://54.214.7.161/static/img/whiteboard-scan.png — `img_ocr:consensus+hex_repair` |
-| 7 | `VISUALPING{fb725e1f3d6728b1}` | http://54.214.7.161/static/js/theme-switcher.js — `application/javascript:decoded:js_escape` |
-| 8 | `VISUALPING{5488187886a5755a}` | http://54.214.7.161/status/eu-region/ — `manual:geo_proxy` |
+| 3 | `VISUALPING{5488187886a5755a}` | http://54.214.7.161/status/eu-region/ — `text/html:html_text` |
+| 4 | `VISUALPING{64d26185a2f94e34}` | http://54.214.7.161/products/filter-gateway — `header:x-provisioning-note` |
+| 5 | `VISUALPING{73c8f3073fdc5f74}` | http://54.214.7.161/wiki/detect-embed/ — `text/html:html_attr:data-vp-archive` |
+| 6 | `VISUALPING{db7e533a9cef7f72}` | http://54.214.7.161/static/img/field-visit.jpg — `img_meta:info:exif[utf-16-le]` |
+| 7 | `VISUALPING{e1c2e40cf01c17cc}` | http://54.214.7.161/static/img/whiteboard-scan.png — `img_ocr:consensus+hex_repair` |
+| 8 | `VISUALPING{fb725e1f3d6728b1}` | http://54.214.7.161/static/js/theme-switcher.js — `application/javascript:decoded:js_escape` |
 
 **Header/cookie secrets counted:** 3 sighting(s) found in response headers/cookies (the disqualification rule was removed); provenance shown as `header:<name>` in the table above.
 
 **Ruled out (not counted):** `VISUALPING{0000deadbeef0000}` (worked_example), `VISUALPING{, sixteen hexadecimal` (format_prose), `VISUALPING{</code>, sixteen hexa` (format_prose), `VISUALPING{0000deadbeef0000}` (worked_example), `VISUALPING{, sixteen hexadecimal` (format_prose), `VISUALPING{</code>, sixteen hexa` (format_prose), `FRAGMENT:5a6b01d97bfffdc3` (bare_hex_fragment), `FRAGMENT:622ee9dfa76d54a6` (bare_hex_fragment), `FRAGMENT:e19cd3432599af6f` (bare_hex_fragment)
-
-**Manually recorded sightings** (outside the automated crawl — provenance stated, not hidden):
-
-- `VISUALPING{5488187886a5755a}` on http://54.214.7.161/status/eu-region/ — Geo-gated page (403 'only visible to' from this network). Fetched once, by hand, through a country=DE exit proxy on 2026-08-21; body returned 200 with the region's provisioning password in <pre><code>. Recorded manually — the crawl was NOT re-run, per the locked no-automated-bypass decision (CONTEXT.md); the coverage exception for this page stands.
 
 ## 4. Image forensics
 

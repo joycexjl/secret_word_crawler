@@ -199,6 +199,7 @@ def write_coverage_md(
     unhandled: list[str],
     idle_timeouts: list[str],
     late_mutations: list[str],
+    late_mutations_post_click: list[str],
     closed_shadow_roots: list[str],
     unexplained_interactives: list[str],
 ) -> Path:
@@ -259,6 +260,7 @@ def write_coverage_md(
     lines.append(f"- Needs-review extensionless refs: {len(needs_review)}")
     lines.append(f"- idle_timeout pages: {idle_timeouts or 'none'}")
     lines.append(f"- late_mutation tripwire pages: {late_mutations or 'none'}")
+    lines.append(f"- late_mutation post-click pages: {late_mutations_post_click or 'none'}")
     lines.append(f"- closed shadow roots on: {closed_shadow_roots or 'none'}")
     lines.append(f"- unexplained interactives on: {unexplained_interactives or 'none'}")
 

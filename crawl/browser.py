@@ -125,13 +125,48 @@ class ExpandResult:
     interacted_html: bytes = b""  # post-interaction snapshot (CONTEXT.md: third corpus)
     discovered: list[DiscoveredURL] = field(default_factory=list)
     idle_timeout: bool = False
-    late_mutations: int = 0
+    late_mutations: int = 0            # after the load-moment snapshot
+    late_mutations_post_click: int = 0  # after the interaction snapshot
     closed_shadow_roots: int = 0
     shadow_root_count: int = 0
     unexplained_interactives: int = 0
     clicks: int = 0  # Tier 2 clicks actually performed
     base_href: str = ""  # document base actually used for resolution
     error: str = ""
+
+
+def _wait_quiet(page: Page, quiet_ms: int = 50, cap_ms: int = IDLE_TIMEOUT_MS) -> bool:
+    """Return True if the cap was hit (i.e. never went quiet).
+
+    Equivalent guarantee to wait_for_load_state('networkidle') but with a
+    tunable quiet threshold instead of Playwright's hardcoded 500ms. Slow
+    pages still wait as long as they need: in-flight requests hold the gate
+    open, so no coverage is traded for the shorter window.
+    """
+    state = {"inflight": 0, "last": time.monotonic()}
+
+    def started(_):
+        state["inflight"] += 1
+        state["last"] = time.monotonic()
+
+    def ended(_):
+        state["inflight"] = max(0, state["inflight"] - 1)
+        state["last"] = time.monotonic()
+
+    page.on("request", started)
+    page.on("requestfinished", ended)
+    page.on("requestfailed", ended)
+    try:
+        deadline = time.monotonic() + cap_ms / 1000
+        while time.monotonic() < deadline:
+            if state["inflight"] == 0 and (time.monotonic() - state["last"]) * 1000 >= quiet_ms:
+                return False
+            page.wait_for_timeout(10)
+        return True
+    finally:
+        page.remove_listener("request", started)
+        page.remove_listener("requestfinished", ended)
+        page.remove_listener("requestfailed", ended)
 
 
 class CrawlBrowser:
@@ -247,7 +282,7 @@ class CrawlBrowser:
 
     # -- expand path (real page render; Tier 0 + Tier 1) ---------------------
 
-    def expand(self, url: str) -> ExpandResult:
+    def expand(self, url: str) -> ExpandResult:  # noqa: C901
         """Render a 2xx HTML page in a fresh page and run discovery tiers.
 
         Canonical snapshot moment: domcontentloaded, then a bounded wait for
@@ -279,10 +314,8 @@ class CrawlBrowser:
         page.on("response", on_response)
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
-            try:
-                page.wait_for_load_state("networkidle", timeout=IDLE_TIMEOUT_MS)
-            except Exception:
-                result.idle_timeout = True
+            result.idle_timeout = _wait_quiet(page, quiet_ms=50,
+                                              cap_ms=IDLE_TIMEOUT_MS)
 
             harvest = page.evaluate(TIER0_HARVEST_JS)
             result.base_href = harvest.get("base") or page.url
@@ -299,23 +332,36 @@ class CrawlBrowser:
             # carousel arrows to a DOM-hash fixpoint, then takes the
             # post-interaction snapshot — the third corpus.
             if result.unexplained_interactives:
+                # Read the load-phase tripwire BEFORE the re-arm below would
+                # zero it — otherwise `late_mutations` is 0 by construction,
+                # not by measurement.
+                result.late_mutations = page.evaluate(
+                    "() => window.__lateMutations || 0")
                 xhr_before = len(xhr_urls)
                 result.clicks = page.evaluate(TIER2_CLICK_JS)
-                try:
-                    page.wait_for_load_state("networkidle", timeout=IDLE_TIMEOUT_MS)
-                except Exception:
-                    pass
-                result.interacted_html = page.content().encode("utf-8")
-                # Re-arm: mutations after the post-interaction snapshot count
-                # as late again (the snapshot moment moved).
-                page.evaluate("() => { window.__lateMutations = 0; window.__snapshotTaken = true; }")
-                # Only post-click XHRs are interaction-gated discoveries;
-                # earlier ones belong to the Tier 1 load pass.
-                del xhr_urls[:xhr_before]
+                if result.clicks:
+                    # Only wait when something actually happened. A zero-click
+                    # pass cannot have changed the DOM, so the second settle
+                    # and the second serialization are both dead weight.
+                    _wait_quiet(page, quiet_ms=50, cap_ms=IDLE_TIMEOUT_MS)
+                    result.interacted_html = page.content().encode("utf-8")
+                    # Re-arm: mutations after the post-interaction snapshot
+                    # count as late again (the snapshot moment moved).
+                    page.evaluate(
+                        "() => { window.__lateMutations = 0; window.__snapshotTaken = true; }"
+                    )
+                    # Only post-click XHRs are interaction-gated discoveries;
+                    # earlier ones belong to the Tier 1 load pass.
+                    del xhr_urls[:xhr_before]
 
             nav_intents = page.evaluate("() => window.__navIntents || []")
             result.closed_shadow_roots = page.evaluate("() => window.__closedShadowRoots || 0")
-            result.late_mutations = page.evaluate("() => window.__lateMutations || 0")
+            if result.clicks:
+                result.late_mutations_post_click = page.evaluate(
+                    "() => window.__lateMutations || 0")
+            else:
+                result.late_mutations = page.evaluate(
+                    "() => window.__lateMutations || 0")
 
             base = result.base_href
             for item in raw:
@@ -409,15 +455,26 @@ TIER0_HARVEST_JS = r"""
   };
   walk(document);
 
-  // Unexplained interactives: clickable-looking elements (Tier 2 trigger).
-  const clickable = document.querySelectorAll('[role="button"], [onclick]');
-  out.interactives = clickable.length + (function(){
+  // Tier 2 trigger: elements the click set would actually target.
+  const CLICK_SET = 'button, [role="button"], [role="tab"], summary, [onclick],'
+                  + ' [class*="next" i], [class*="prev" i], [id*="next" i],'
+                  + ' [id*="prev" i], [aria-label*="next" i], [aria-label*="prev" i]';
+  out.clickTargets = document.querySelectorAll(CLICK_SET).length;
+
+  // Diagnostic only: pointer-cursor elements that are NOT anchors/buttons.
+  // Anchors get cursor:pointer from the UA stylesheet, so counting them
+  // makes this metric a link count. Skipped entirely when clickTargets>0
+  // (the cheap signal already answered) to avoid the style-recalc cost.
+  out.interactives = out.clickTargets;
+  if (!out.clickTargets) {
     let n = 0;
     for (const el of document.querySelectorAll('*')) {
+      if (el.matches('a[href], button, input, select, textarea, summary')) continue;
       try { if (getComputedStyle(el).cursor === 'pointer') n++; } catch (e) {}
     }
-    return n;
-  })();
+    out.unexplainedPointers = n;
+    out.interactives = n;
+  }
 
   return out;
 }

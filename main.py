@@ -246,6 +246,8 @@ def main() -> int:
                             record["idle_timeout"] = exp.idle_timeout
                             if exp.late_mutations:
                                 record["late_mutations"] = exp.late_mutations
+                            if exp.late_mutations_post_click:
+                                record["late_mutations_post_click"] = exp.late_mutations_post_click
                             if exp.closed_shadow_roots:
                                 record["closed_shadow_roots"] = exp.closed_shadow_roots
                             if exp.shadow_root_count:
@@ -389,6 +391,8 @@ def main() -> int:
         unhandled=unhandled,
         idle_timeouts=[r["url"] for r in fetched_rows if r.get("idle_timeout")],
         late_mutations=[r["url"] for r in fetched_rows if r.get("late_mutations")],
+        late_mutations_post_click=[r["url"] for r in fetched_rows
+                                   if r.get("late_mutations_post_click")],
         closed_shadow_roots=[r["url"] for r in fetched_rows if r.get("closed_shadow_roots")],
         unexplained_interactives=[r["url"] for r in fetched_rows if r.get("unexplained_interactives")],
     )
