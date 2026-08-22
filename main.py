@@ -38,7 +38,7 @@ from crawl.discover import (
 )
 from crawl.frontier import Frontier
 from crawl.graph import EdgeStore, bfs_depths, export_dot, load_edges
-from crawl.normalize import ScopeTriple, canon_key, in_scope
+from crawl.normalize import canon_key, in_scope, scope_triple
 from crawl.report import (
     build_disagreements,
     build_duplication,
@@ -53,8 +53,9 @@ from crawl.store import BlobStore, Manifest, make_record
 from crawl.envfile import load_dotenv
 
 CONFIG = {
-    "scope": ScopeTriple("http", "54.214.7.161", 80),
-    "seed_url": "http://54.214.7.161/",
+    # The crawl target comes from the environment (TARGET_URL), never from the
+    # repo — same rule as credentials (ADR 0001). See .env.
+    "target_url_env": "TARGET_URL",
     "username_env": "VISUALPING_USER",
     "password_env": "VISUALPING_PASS",
     # Optional geo-bypass proxy (env: PROXY_SERVER/PROXY_USER/PROXY_PASS).
@@ -108,13 +109,23 @@ def main() -> int:
         datefmt="%H:%M:%S",
         stream=sys.stderr,
     )
-    load_dotenv()  # .env fills VISUALPING_USER/PASS unless already in env
+    load_dotenv()  # .env fills TARGET_URL + VISUALPING_USER/PASS unless already in env
     username = os.environ.get(CONFIG["username_env"])
     password = os.environ.get(CONFIG["password_env"])
     if not username or not password:
         print(
             f"credentials missing: set {CONFIG['username_env']} and "
             f"{CONFIG['password_env']} in the environment or in .env",
+            file=sys.stderr,
+        )
+        return 2
+
+    seed = os.environ.get(CONFIG["target_url_env"], "").strip()
+    scope = scope_triple(seed) if seed else None
+    if scope is None:
+        print(
+            f"target missing or invalid: set {CONFIG['target_url_env']} to an "
+            f"absolute http(s) URL in the environment or in .env",
             file=sys.stderr,
         )
         return 2
@@ -137,8 +148,8 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     log.info("crawl start: seed=%s scope=%s:%s:%s caps=(global=%d, per-template=%d)",
-             CONFIG["seed_url"], CONFIG["scope"].scheme, CONFIG["scope"].host,
-             CONFIG["scope"].port, CONFIG["max_resources"], CONFIG["per_template_cap"])
+             seed, scope.scheme, scope.host,
+             scope.port, CONFIG["max_resources"], CONFIG["per_template_cap"])
 
     store = BlobStore(out_dir)
     manifest = Manifest(out_dir)
@@ -147,14 +158,15 @@ def main() -> int:
         max_resources=CONFIG["max_resources"],
         per_template_cap=CONFIG["per_template_cap"],
     )
-    scope: ScopeTriple = CONFIG["scope"]
-    seed = CONFIG["seed_url"]
     root_canon = canon_key(seed)
     frontier.add(root_canon, seed, depth=0)
     # Declared-path seeds (robots/sitemap/manifest/etc.): reachable even if no
     # page links to them. Recorded as edges from the root with how=seed.
+    origin = f"{scope.scheme}://{scope.host}"
+    if scope.port not in (80, 443):
+        origin = f"{origin}:{scope.port}"
     for path in DECLARED_PATH_SEEDS:
-        url = f"http://{scope.host}{path}"
+        url = f"{origin}{path}"
         if in_scope(url, scope):
             frontier.add(canon_key(url), url, depth=1)
             edges.write(src=root_canon, dst=canon_key(url), how="seed",

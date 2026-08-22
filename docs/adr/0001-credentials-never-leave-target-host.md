@@ -18,7 +18,8 @@ the frontier (a scheduling decision), leaving the network layer able to leak.
 ## Decision
 
 Scope is enforced at the network layer: a route interceptor aborts every
-request whose `(scheme, host, port)` is not `(http, 54.214.7.161, 80)`,
+request whose `(scheme, host, port)` is not the scope triple derived from the
+configured `TARGET_URL` (the repo deliberately never names the target),
 and credentials are provided via `http_credentials` on the same context.
 The frontier still records out-of-scope edges for the graph and the
 accounting, but the request can never be made. During Tier 2 interaction the
@@ -34,5 +35,7 @@ interceptor additionally aborts non-GET requests, logging them as
 - Off-host subresources (CDN assets, fonts) will fail to load in the
   browser; this is accepted — they are out of scope anyway, and the failures
   are visible in the response recorder.
-- Changing the target (or allowing an off-host dependency) requires editing
-  the interceptor, a deliberate act, not a config slip.
+- Changing the target is a config change (`.env`), not a code change; the
+  interceptor follows the configured scope automatically. Allowing an
+  off-host dependency still requires editing the interceptor — a deliberate
+  act, not a config slip.

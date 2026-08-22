@@ -2,7 +2,8 @@
 
 A Playwright-based crawler built for the Visualping secret-word challenge:
 recover all **8 secret words** (`VISUALPING{<16 lowercase hex>}`) hidden across
-`http://54.214.7.161/`, and be able to argue the crawl was complete.
+the target site, and be able to argue the crawl was complete. The target URL
+is configuration (`.env`), not code — nothing in the repo names the site.
 
 The work is split into two strictly separate phases (see `docs/crawler-design.md`):
 
@@ -37,6 +38,10 @@ brew install tesseract   # macOS; or your platform's package manager
 Create a `.env` in the repo root (gitignored — never commit credentials):
 
 ```dotenv
+# The site to crawl (required). The seed URL and the scope triple are both
+# derived from this; the crawl never leaves this (scheme, host, port).
+TARGET_URL=http://target.example/
+
 # Basic Auth credentials for the target (required)
 VISUALPING_USER=...
 VISUALPING_PASS=...
@@ -49,7 +54,7 @@ PROXY_USER=...
 PROXY_PASS=...
 ```
 
-All other knobs (scope, seed URL, caps, politeness delay, Tier 2 toggle) live
+All other knobs (caps, politeness delay, Tier 2 toggle) live
 in the `CONFIG` dict at the top of `main.py` — edit there, not via flags.
 
 ## Running

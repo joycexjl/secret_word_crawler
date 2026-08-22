@@ -1,6 +1,6 @@
 # Site Crawler — Design Doc
 
-**Target:** `http://54.214.7.161/`
+**Target:** configured via `TARGET_URL` in `.env` (deliberately never named in the repo)
 **Goal:** recover eight `VISUALPING{<16 hex>}` secret words, and be able to argue the crawl was complete.
 **Stack:** Python 3.11+, Playwright (sync API), Chromium.
 **Auth:** HTTP Basic Auth on every request to the target (see §2 and ADR 0001).
@@ -32,7 +32,7 @@ The practical payoff: when extraction needs a new capability (OCR, PDF text, pix
 
 ### Non-goals
 
-- Off-host crawling. Scope is the `(scheme, host, port)` triple `(http, 54.214.7.161, 80)` — anything else (including `https:` and other ports) is recorded as an edge and marked out-of-scope. Enforcement is at the **network layer**: a route interceptor aborts every out-of-scope request, so Basic Auth credentials physically cannot leave the target host (ADR 0001). The frontier still records the edges.
+- Off-host crawling. Scope is the `(scheme, host, port)` triple derived from the configured `TARGET_URL` — anything else (including other schemes and ports on the same host) is recorded as an edge and marked out-of-scope. Enforcement is at the **network layer**: a route interceptor aborts every out-of-scope request, so Basic Auth credentials physically cannot leave the target host (ADR 0001). The frontier still records the edges.
 - Form submission and state-mutating requests. The crawler is **GET-only**. During Tier 2 interaction, non-GET requests are aborted by the interceptor and logged as `blocked_mutation` findings.
 - Speed. Simplicity and politeness win. Note: recon (2026-08-21) found `/report/?page=N` pagination that is **unbounded** (still self-linking at N=100), so "small site" is not a safe assumption — see the per-template cap in §6.
 
@@ -165,7 +165,7 @@ Rules:
 - Normalise `/a/b/../c` path segments.
 - Treat `/page` and `/page/` as distinct URLs (the server decides), but reconcile them later via body hash.
 
-Scope check: the `(scheme, host, port)` triple must equal `(http, 54.214.7.161, 80)`. Everything else becomes an edge with `state: out_of_scope` — and is also aborted at the network layer (ADR 0001), so a redirect to an out-of-scope target is recorded as a `redirect` edge and flagged as a **redirect-out** for manual ruling.
+Scope check: the `(scheme, host, port)` triple must equal the one derived from the configured `TARGET_URL`. Everything else becomes an edge with `state: out_of_scope` — and is also aborted at the network layer (ADR 0001), so a redirect to an out-of-scope target is recorded as a `redirect` edge and flagged as a **redirect-out** for manual ruling.
 
 ### Frontier and the loop invariant
 

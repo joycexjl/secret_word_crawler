@@ -20,7 +20,7 @@ proxy = {
     "password": os.environ["PROXY_PASS"],
 }
 
-URL = "http://54.214.7.161/status/eu-region/"
+URL = os.environ["TARGET_URL"].rstrip("/") + "/status/eu-region/"
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True, proxy=proxy)

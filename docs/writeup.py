@@ -17,9 +17,13 @@ the count supports being done.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections import Counter
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from crawl.envfile import load_dotenv
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -33,6 +37,9 @@ def _how_summary(edges: list[dict]) -> Counter:
 
 
 def build_submission(out: Path) -> str:
+    # The target is configuration, not code: read it like main.py does.
+    load_dotenv()
+    target = os.environ.get("TARGET_URL", "").strip() or "(TARGET_URL not set)"
     manifest = _read_jsonl(out / "manifest.jsonl")
     edges = _read_jsonl(out / "edges.jsonl")
     fetched = [r for r in manifest if "sha256" in r]
@@ -49,7 +56,7 @@ def build_submission(out: Path) -> str:
     L: list[str] = []
     L.append("# Visualping secret-word challenge — submission")
     L.append("")
-    L.append(f"**Target:** `http://54.214.7.161/` — recover eight `VISUALPING{{<16 hex>}}` "
+    L.append(f"**Target:** `{target}` — recover eight `VISUALPING{{<16 hex>}}` "
              "secret words, and argue the crawl was complete.")
     L.append("")
 
@@ -63,8 +70,8 @@ def build_submission(out: Path) -> str:
     L.append("- **Phase 1 — record first.** A real browser (Playwright/Chromium) fetched every "
              "in-scope resource and wrote every response body to a content-addressed store "
              "(`out/blobs/<sha256>`), with a per-fetch manifest. Scope was enforced at the "
-             "**network layer** — a route interceptor aborted every request outside "
-             "`(http, 54.214.7.161, 80)`, so the Basic Auth credentials physically could not "
+             "**network layer** — a route interceptor aborted every request outside the "
+             "configured scope triple, so the Basic Auth credentials physically could not "
              "leave the target host.")
     L.append("- **Phase 2 — extract later.** Extraction ran offline over the saved bytes, so a "
              "new capability (a decoded variant, the pixel sweep) was a re-run over local disk "

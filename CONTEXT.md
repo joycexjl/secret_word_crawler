@@ -63,8 +63,9 @@ Every discovered canon key ends in exactly one terminal state:
 The accounting invariant: these four sets partition everything ever seen.
 
 ### Scope triple
-`(scheme, host, port)` = `(http, 54.214.7.161, 80)`. Anything else —
-including `https:` and other ports on the same IP — is out of scope.
+`(scheme, host, port)` derived from the configured `TARGET_URL` (see `.env`;
+the repo deliberately never names the target). Anything else —
+including other schemes and other ports on the same host — is out of scope.
 Out-of-scope requests are blocked at the network layer, so credentials
 physically cannot leave the target host.
 
