@@ -121,12 +121,14 @@ class DiscoveredURL:
 class ExpandResult:
     ok: bool
     rendered_html: bytes = b""
+    interacted_html: bytes = b""  # post-interaction snapshot (CONTEXT.md: third corpus)
     discovered: list[DiscoveredURL] = field(default_factory=list)
     idle_timeout: bool = False
     late_mutations: int = 0
     closed_shadow_roots: int = 0
     shadow_root_count: int = 0
     unexplained_interactives: int = 0
+    clicks: int = 0  # Tier 2 clicks actually performed
     base_href: str = ""  # document base actually used for resolution
     error: str = ""
 
@@ -274,6 +276,25 @@ class CrawlBrowser:
             result.rendered_html = page.content().encode("utf-8")
             page.evaluate("() => { window.__snapshotTaken = true; }")
 
+            # Tier 2 interaction (CONTEXT.md): triggered by a nonzero
+            # unexplained-interactive count. Clicks the semantic widget set,
+            # carousel arrows to a DOM-hash fixpoint, then takes the
+            # post-interaction snapshot — the third corpus.
+            if result.unexplained_interactives:
+                xhr_before = len(xhr_urls)
+                result.clicks = page.evaluate(TIER2_CLICK_JS)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=IDLE_TIMEOUT_MS)
+                except Exception:
+                    pass
+                result.interacted_html = page.content().encode("utf-8")
+                # Re-arm: mutations after the post-interaction snapshot count
+                # as late again (the snapshot moment moved).
+                page.evaluate("() => { window.__lateMutations = 0; window.__snapshotTaken = true; }")
+                # Only post-click XHRs are interaction-gated discoveries;
+                # earlier ones belong to the Tier 1 load pass.
+                del xhr_urls[:xhr_before]
+
             nav_intents = page.evaluate("() => window.__navIntents || []")
             result.closed_shadow_roots = page.evaluate("() => window.__closedShadowRoots || 0")
             result.late_mutations = page.evaluate("() => window.__lateMutations || 0")
@@ -381,5 +402,64 @@ TIER0_HARVEST_JS = r"""
   })();
 
   return out;
+}
+"""
+
+
+# Tier 2 interaction (CONTEXT.md): the click set is *semantic*, not the
+# flagged unexplained-interactive set — buttons, tabs, <summary>,
+# [role=button], and carousel next/prev controls. Each clicked once, except
+# carousel arrows, which are clicked repeatedly (cap ~10) until the
+# serialized-DOM hash repeats: a fixpoint, mirroring the crawl/byte-scan
+# fixpoint. Returns the number of clicks actually performed. Runs as one
+# in-page evaluation: per-click round-trips would dominate 800 pages.
+TIER2_CLICK_JS = r"""
+() => {
+  const CLICK_ONCE = 'button, [role="button"], [role="tab"], summary, [onclick]';
+  // Carousel rotators: class/id/aria hints for next/prev controls.
+  const CAROUSEL = '[class*="next" i], [class*="prev" i], [id*="next" i], [id*="prev" i],'
+                 + ' [aria-label*="next" i], [aria-label*="prev" i],'
+                 + ' [class*="carousel" i] [role="button"], [class*="slider" i] [role="button"]';
+  const STEP_CAP = 10;
+
+  const visible = (el) => {
+    try {
+      const r = el.getBoundingClientRect();
+      if (!r.width && !r.height) return false;
+      const s = getComputedStyle(el);
+      return s.visibility !== 'hidden' && s.display !== 'none';
+    } catch (e) { return false; }
+  };
+  const click = (el) => {
+    try { el.scrollIntoView({block: 'nearest'}); } catch (e) {}
+    el.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
+  };
+  const domHash = () => document.documentElement.outerHTML.length + '|'
+                      + document.documentElement.outerHTML.slice(0, 2000);
+
+  let clicks = 0;
+  const seen = new Set();
+
+  // One-shot semantic set.
+  for (const el of document.querySelectorAll(CLICK_ONCE)) {
+    if (seen.has(el) || !visible(el)) continue;
+    seen.add(el);
+    click(el);
+    clicks++;
+  }
+
+  // Carousel rotators: click to fixpoint (same serialized DOM twice = done).
+  for (const el of document.querySelectorAll(CAROUSEL)) {
+    if (!visible(el)) continue;
+    let last = '';
+    for (let step = 0; step < STEP_CAP; step++) {
+      const h = domHash();
+      if (h === last) break;  // fixpoint: DOM stopped changing
+      last = h;
+      click(el);
+      clicks++;
+    }
+  }
+  return clicks;
 }
 """

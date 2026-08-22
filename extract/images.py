@@ -173,6 +173,44 @@ def extract_raw_chunk_strings(body: bytes, img_format: str) -> list[tuple[str, b
 # Plane-fit anomaly detection
 # --------------------------------------------------------------------------
 
+def _fit_modular_ramp(arr: np.ndarray) -> dict | None:
+    """Detect a *modular* ramp — the shape the four 48x48 PNGs actually are.
+
+    The author's gradients are R=(R0+5x)%256, G=(G0+5y)%256, B=f((x XOR y)%64).
+    A linear plane fit wraps at 256 and reports a bogus ~216 residual on these
+    (the stale M5 text). When the linear fit fails, test the modular model:
+    R,G affine-mod-256 in x,y; B a pure function of (x XOR y) % 64. Returns a
+    ramp_fit dict on an exact (zero-deviation) match, else None.
+    """
+    h, w = arr.shape[:2]
+    if h < 8 or w < 8:
+        return None
+    planes = arr.reshape(h, w, -1) if arr.ndim == 3 else arr[:, :, None]
+    if planes.shape[2] < 3:
+        return None
+    yy, xx = np.mgrid[0:h,0:w]
+    a = planes.astype(int)
+    R, G, B = a[:,:,0], a[:,:,1], a[:,:,2]
+    # R = (R0 + sx*x) % 256 : solve R0, sx from column deltas; require exact.
+    dRx = (R[0,1]-R[0,0]) % 256
+    predR = (R[0,0] + dRx*xx) % 256
+    if not np.array_equal(R, predR):
+        return None
+    dGy = (G[1,0]-G[0,0]) % 256
+    predG = (G[0,0] + dGy*yy) % 256
+    if not np.array_equal(G, predG):
+        return None
+    # B constant per (x XOR y) % 64 bucket.
+    xorv = (xx ^ yy) % 64
+    for v in np.unique(xorv):
+        if np.unique(B[xorv==v]).size != 1:
+            return None
+    return {"is_ramp": True, "max_residual": 0.0, "deviating_px": 0,
+            "explanation": (f"modular ramp, exact: R=(R0+{dRx}x)%256, "
+                            f"G=(G0+{dGy}y)%256, B=f((x XOR y)%64); zero "
+                            f"deviation across {h*w}px — no pixel payload")}
+
+
 def fit_ramp(arr: np.ndarray) -> dict:
     """Model-fit verdict: is this image a mathematical colour ramp, and if so
     where does it deviate?
@@ -204,11 +242,17 @@ def fit_ramp(arr: np.ndarray) -> dict:
     is_ramp = max_residual <= RAMP_MAX_RESIDUAL
 
     if not is_ramp:
+        # A linear miss can still be a *modular* ramp (the author's gradients
+        # wrap at 256). Test that before declaring the image structured.
+        modular = _fit_modular_ramp(arr)
+        if modular is not None:
+            return modular
         return {"is_ramp": False, "max_residual": round(max_residual, 2),
                 "deviating_px": -1,
                 "explanation": f"not a ramp (a 3-param plane leaves residual "
-                               f"{max_residual:.0f} > {RAMP_MAX_RESIDUAL:.0f}); image is "
-                               f"structured — pixel-payload reasoning does not apply"}
+                               f"{max_residual:.0f} > {RAMP_MAX_RESIDUAL:.0f}, and not a "
+                               f"modular ramp either); image is structured — "
+                               f"pixel-payload reasoning does not apply"}
 
     # Corner fit -> locate deviating pixels (payload) on a true ramp.
     deviating = np.zeros((h, w), dtype=bool)
@@ -480,8 +524,13 @@ def analyze_image(body: bytes, *, url: str, sha256: str,
         rep.ruling = "needs-review:disagreeing-payloads"
     elif rep.sightings:
         rep.ruling = "payload-found"
-    elif rep.needs_review:
+    elif any(not s.ruled_out for s in rep.needs_review):
+        # Genuine review items remain (empty ruled_out). Entries that already
+        # carry a ruling (e.g. bare-hex decoys) don't make the image
+        # needs-review — they're decided, so the image is ruled-out decoy-only.
         rep.ruling = "needs-review:loose-only"
+    elif rep.needs_review:
+        rep.ruling = "ruled-out:decoy-only"
     else:
         # Swept clean. A true ramp reports measured-clean; a non-ramp reports
         # honestly that pixel-payload reasoning did not apply to it.

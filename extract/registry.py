@@ -27,7 +27,10 @@ from xml.etree import ElementTree
 
 def _surfaces_html(body: bytes) -> list[tuple[str, bytes]]:
     """HTML: tags stripped (so a word split across <span>s still matches),
-    plus comments and display:none content explicitly kept."""
+    plus comments, display:none content, attribute values, and inline
+    <script>/<style> bodies as surface fragments (CONTEXT.md: a fragment is
+    a surface of the container blob, never a virtual resource — provenance
+    chains container -> fragment -> sub-mechanism)."""
     out: list[tuple[str, bytes]] = []
     try:
         text = body.decode("utf-8", errors="replace")
@@ -49,6 +52,33 @@ def _surfaces_html(body: bytes) -> list[tuple[str, bytes]]:
     ):
         inner = re.sub(r"<[^>]+>", "", m.group(1))
         out.append(("html_hidden", inner.encode("utf-8", errors="replace")))
+    # Attribute fragments, tagged per attribute name: when a secret lands in
+    # an attribute, *which* attribute is part of the finding. Values are
+    # scanned as-is (no code sub-split — they carry no different grammar).
+    # Scanned over markup with script/style bodies removed, so JS assignment
+    # syntax (var k = '...') doesn't masquerade as an attribute.
+    markup = re.sub(r"<script.*?</script>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+    markup = re.sub(r"<style.*?</style>", " ", markup, flags=re.DOTALL | re.IGNORECASE)
+    for m in re.finditer(
+        r"""([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')""", markup,
+    ):
+        name, value = m.group(1).lower(), m.group(2) if m.group(2) is not None else m.group(3)
+        if value:
+            out.append((f"html_attr:{name}", value.encode("utf-8", errors="replace")))
+    # Inline <script>/<style> fragments: the only fragments that get the code
+    # sub-split, because they alone carry a different grammar than HTML.
+    for tag in ("script", "style"):
+        for m in re.finditer(
+            rf"<{tag}\b[^>]*>(.*?)</{tag}>", text, re.DOTALL | re.IGNORECASE,
+        ):
+            fragment = m.group(1).encode("utf-8", errors="replace")
+            if not fragment.strip():
+                continue
+            for sub, data in _surfaces_code(fragment):
+                out.append((f"inline_{tag}:{sub}", data))
+    # Raw fallback, like every other text handler — an inline block's bytes
+    # are in here too, but the fragment surfaces above carry the provenance.
+    out.append(("raw", body))
     return out
 
 
@@ -162,6 +192,48 @@ _B64_BLOB = re.compile(rb"[A-Za-z0-9+/]{32,}={0,2}")
 _DATA_URI = re.compile(rb"data:[^;,]*;base64,([A-Za-z0-9+/=]+)")
 _PERCENT = re.compile(rb"(?:%[0-9A-Fa-f]{2}){4,}")
 _HTML_ENTITY_BLOB = re.compile(rb"(?:&(?:#\d+|#x[0-9a-fA-F]+|[a-z]+);){4,}")
+# JS string escapes: runs of ≥4 \xHH / \uHHHH units, or String.fromCharCode
+# with ≥4 numeric args. The gate matches the percent/entity philosophy: a
+# fully escaped marker is inherently a long run; short runs are noise.
+# CSS escapes: runs of ≥4 \HH / \HHHHHH units (1–6 hex digits, optional
+# trailing whitespace consumed per CSS syntax). Same long-run gate as JS:
+# a fully escaped marker is inherently a long run; short runs are noise.
+_CSS_ESCAPE_RUN = re.compile(rb"(?:\\[0-9A-Fa-f]{1,6}\s?){4,}")
+_JS_ESCAPE_RUN = re.compile(rb"(?:\\x[0-9A-Fa-f]{2}|\\u[0-9A-Fa-f]{4}){4,}")
+_JS_FROMCHARCODE = re.compile(
+    rb"String\.fromCharCode\(\s*\d+\s*(?:,\s*\d+\s*){3,}\)")
+# fromCharCode with the codes in an array literal: .apply(null, [86, 73, …])
+# or .apply(null, _var) where _var = [86, 73, …] sits nearby.
+_JS_FCC_APPLY_ARR = re.compile(
+    rb"String\.fromCharCode\.apply\([^)]*?\[\s*\d+\s*(?:,\s*\d+\s*){3,}\]")
+
+
+def _decode_js_escapes(blob: bytes) -> bytes:
+    out = bytearray()
+    for m in re.finditer(rb"\\x([0-9A-Fa-f]{2})|\\u([0-9A-Fa-f]{4})", blob):
+        n = int(m.group(1) or m.group(2), 16)
+        out.extend(chr(n).encode("utf-8", errors="replace"))
+    return bytes(out)
+
+
+def _decode_fromcharcode(blob: bytes) -> bytes:
+    out = bytearray()
+    for m in re.finditer(rb"\d+", blob):
+        n = int(m.group(0))
+        if n > 0x10FFFF:
+            return b""
+        out.extend(chr(n).encode("utf-8", errors="replace"))
+    return bytes(out)
+
+
+def _decode_css_escapes(blob: bytes) -> bytes:
+    out = bytearray()
+    for m in re.finditer(rb"\\([0-9A-Fa-f]{1,6})\s?", blob):
+        n = int(m.group(1), 16)
+        if n > 0x10FFFF:
+            return b""
+        out.extend(chr(n).encode("utf-8", errors="replace"))
+    return bytes(out)
 
 
 def _surfaces_decoded(body: bytes) -> list[tuple[str, bytes]]:
@@ -194,6 +266,48 @@ def _surfaces_decoded(body: bytes) -> list[tuple[str, bytes]]:
             out.append(("decoded:html_entities", decoded.encode("utf-8", errors="replace")))
         except Exception:
             pass
+    for m in _CSS_ESCAPE_RUN.finditer(body):
+        try:
+            decoded = _decode_css_escapes(m.group(0))
+            if decoded:
+                out.append(("decoded:css_escape", decoded))
+        except Exception:
+            pass
+    for m in _JS_ESCAPE_RUN.finditer(body):
+        try:
+            out.append(("decoded:js_escape", _decode_js_escapes(m.group(0))))
+        except Exception:
+            pass
+    for m in _JS_FROMCHARCODE.finditer(body):
+        try:
+            decoded = _decode_fromcharcode(m.group(0))
+            if decoded:
+                out.append(("decoded:js_escape", decoded))
+        except Exception:
+            pass
+    for m in _JS_FCC_APPLY_ARR.finditer(body):
+        try:
+            decoded = _decode_fromcharcode(m.group(0))
+            if decoded:
+                out.append(("decoded:js_escape", decoded))
+        except Exception:
+            pass
+    # Codes held in a variable and applied indirectly:
+    #   var _b = [86, 73, …]; … String.fromCharCode.apply(null, _b)
+    # Find each apply-by-variable, then resolve the variable's array literal
+    # anywhere in the same blob (declaration order doesn't matter to the scan).
+    for am in re.finditer(rb"String\.fromCharCode\.apply\([^,]+,\s*([A-Za-z_$][\w$]*)\s*\)", body):
+        var = am.group(1)
+        arr = re.search(
+            rb"(?:var|let|const)?\s*" + re.escape(var) + rb"\s*=\s*\[(\s*\d+\s*(?:,\s*\d+\s*){3,})\]",
+            body)
+        if arr:
+            try:
+                decoded = _decode_fromcharcode(arr.group(1))
+                if decoded:
+                    out.append(("decoded:js_escape", decoded))
+            except Exception:
+                pass
     return out
 
 

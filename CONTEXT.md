@@ -25,16 +25,20 @@ runs once per unique blob and fans sightings out to every fetch event that
 carried it.
 
 ### Rendered DOM snapshot
-The serialized DOM of an HTML page at the [[canonical snapshot moment]],
-stored as its own blob and linked to the fetch event via `rendered_sha256`.
-Distinct corpus from the raw bytes: scripts can inject content (rendered-only)
-or delete it (raw-only). Divergence between the two corpora is a finding.
+The serialized DOM of an HTML page at a [[canonical snapshot moment]],
+stored as its own blob and linked to the fetch event via `rendered_sha256`
+(load moment) or `interacted_sha256` (post-interaction moment). Distinct
+corpora from the raw bytes: scripts can inject content (rendered-only) or
+delete it (raw-only), and interaction can surface DOM that exists only after
+a click. Divergence between any two of the three corpora is a finding.
 
 ### Canonical snapshot moment
-The single, defined moment at which the Tier 0 harvest and the rendered DOM
-snapshot are taken: after `domcontentloaded` plus a bounded wait for network
-idle (~3–5s, then proceed regardless, flagging `idle_timeout`). Mutations
-after this moment are logged as `late_mutation` tripwires, not harvested.
+The defined moments at which harvest and DOM serialization happen. There are
+two: the **load moment** (after `domcontentloaded` plus a bounded wait for
+network idle, ~3–5s, then proceed regardless, flagging `idle_timeout`) and,
+when Tier 2 interaction ran, the **post-interaction moment** (after the
+click sequence completes). Mutations after the load moment and outside the
+interaction sequence are logged as `late_mutation` tripwires, not harvested.
 
 ### Canon key
 The identity of a URL for dedup, frontier, and graph purposes: lowercased
@@ -81,12 +85,21 @@ Crawl and byte-scan alternate until the byte-scan yields nothing new
 ### Query template
 A path plus sorted query parameter *names*, ignoring values. Unbounded
 parameter spaces (e.g. `/report/?page=N`) are capped per template (~60),
-with the truncation recorded loudly as a bounded-coverage admission.
+with the truncation recorded loudly as a bounded-coverage admission. Where
+a probe shows the space is a uniform generated template with no
+page-dependent content (as `/report/?page=N` was: `page=0` and `page=abc`
+both clamp to page 1, `page=61` is the next identical-structure slice),
+the template is declared a bounded-coverage exception rather than crawled
+to fixpoint.
 
 ### Unexplained interactive
 A clickable-looking element whose page visit produced no associated network
 or navigation activity. A nonzero count is the mechanical trigger for
-Tier 2 interaction, which clicks exactly those elements.
+Tier 2 interaction. Tier 2's click set is *semantic*, not the flagged set:
+`button`, `[role=tab]`, `<summary>`, `[role=button]`, and carousel next/prev
+controls — each clicked once, except carousel arrows, which are clicked
+repeatedly up to a step cap (~10) until the serialized-DOM hash repeats
+(a fixpoint). The harvest is the post-interaction snapshot, one per page.
 
 ### Blocked notice
 A 200 response whose body is a policy block or interstitial (e.g. the
@@ -136,3 +149,20 @@ The original file path of a sourcemap `sourcesContent` entry
 pre-bundle source, the carrier path is part of the sighting's provenance —
 "which original file carried it" — recorded in the surface tag rather than
 as a URL.
+
+### Surface fragment
+A byte range *inside* a [[blob]] whose content type differs from the
+container's — an inline `<script>` or `<style>` body in an HTML page, or any
+attribute value (`data-*`, `alt`, `title`, `<meta content>`, `aria-label`).
+A fragment is a *surface*, not a virtual resource: it has no canon key, no
+fetch event, no sha256 of its own, and is never fetched or expanded. Its
+provenance chains container → fragment → sub-mechanism
+(`text/html:inline_script:string_literal`), so the code extractor's
+sub-surfaces (comment, string literal, raw) can be applied to the fragment's
+bytes without pretending the fragment was ever a response. Attribute
+fragments are tagged per attribute name (`text/html:html_attr:data-key`),
+because when a secret lands in an attribute, *which* attribute is part of
+the finding. Only inline `<script>`/`<style>` bodies get the code sub-split —
+they alone carry a different grammar; attribute values are scanned as-is.
+This keeps the [[fetch event]] partition invariant intact: fragments were
+never requested, so they join no accounting set.

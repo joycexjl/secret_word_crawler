@@ -113,35 +113,55 @@ def run(out_dir: Path, expected: int = EXPECTED_SECRETS) -> dict:
                     _route(s, strict, needs_review, ruled_out)
 
         # Dual corpus for HTML: the rendered snapshot is a separate blob.
+        # And a third: the post-interaction snapshot (CONTEXT.md — Tier 2),
+        # extracted under the interacted: prefix.
         for row in group:
-            rsha = row.get("rendered_sha256")
-            if not rsha:
-                continue
-            rendered = (out_dir / "blobs" / rsha).read_bytes()
-            for sub, data in extract_blob("text/html", rendered):
-                for s in scan_text(data, how_found=f"rendered:{sub}",
-                                   url=row["url"], sha256=rsha,
-                                   with_charset=(sub == "raw")):
-                    _route(s, strict, needs_review, ruled_out)
+            for key, prefix in (("rendered_sha256", "rendered"),
+                                ("interacted_sha256", "interacted")):
+                rsha = row.get(key)
+                if not rsha:
+                    continue
+                rendered = (out_dir / "blobs" / rsha).read_bytes()
+                for sub, data in extract_blob("text/html", rendered):
+                    for s in scan_text(data, how_found=f"{prefix}:{sub}",
+                                       url=row["url"], sha256=rsha,
+                                       with_charset=(sub == "raw")):
+                        _route(s, strict, needs_review, ruled_out)
 
-    # -- divergence findings: raw-only vs rendered-only ----------------------
-    # Only meaningful on pages that actually have BOTH corpora (a rendered
-    # snapshot exists only for expanded 2xx HTML). Per-page comparison avoids
-    # false "raw_only" flags on resources that were never rendered at all.
-    pages = [r for r in fetched if r.get("rendered_sha256")]
+    # -- divergence findings: raw vs rendered vs interacted ------------------
+    # Only meaningful on pages that actually have the corpora being compared
+    # (snapshots exist only for expanded 2xx HTML; interacted only when Tier 2
+    # ran). Per-page comparison avoids false flags on resources never rendered.
+    _CORPUS_NOTES = {
+        "raw_only": "in raw bytes, absent from the rendered DOM (deleted on load?)",
+        "rendered_only": "injected by script; not in raw bytes",
+        "interacted_only": "exists only after Tier 2 interaction (click-gated DOM)",
+    }
+
+    def corpus_of(how: str) -> str | None:
+        if how.startswith("rendered:"):
+            return "rendered"
+        if how.startswith("interacted:"):
+            return "interacted"
+        if how.startswith("header:"):
+            return None  # header sightings were never in any body corpus
+        return "raw"
+
+    pages = [r for r in fetched if r.get("rendered_sha256") or r.get("interacted_sha256")]
     for row in pages:
-        raw_c = {c for c, ss in strict.items()
-                 if any(s.url == row["url"] and not s.how_found.startswith("rendered:")
-                        for s in ss)}
-        ren_c = {c for c, ss in strict.items()
-                 if any(s.url == row["url"] and s.how_found.startswith("rendered:")
-                        for s in ss)}
-        for c in sorted(raw_c - ren_c):
-            divergences.append({"canonical": c, "corpus": "raw_only", "url": row["url"],
-                                "note": "in raw bytes, absent from rendered DOM (deleted on load?)"})
-        for c in sorted(ren_c - raw_c):
-            divergences.append({"canonical": c, "corpus": "rendered_only", "url": row["url"],
-                                "note": "injected by script; not in raw bytes"})
+        corpora = {"raw": set(), "rendered": set(), "interacted": set()}
+        for c, ss in strict.items():
+            for s in ss:
+                if s.url == row["url"]:
+                    corpus = corpus_of(s.how_found)
+                    if corpus is not None:
+                        corpora[corpus].add(c)
+        present = [k for k, v in corpora.items() if v]
+        for k in present:
+            others = set().union(*(corpora[o] for o in present if o != k))
+            for c in sorted(corpora[k] - others):
+                divergences.append({"canonical": c, "corpus": f"{k}_only",
+                                    "url": row["url"], "note": _CORPUS_NOTES.get(f"{k}_only", "")})
 
     # -- header/cookie scan, per row ----------------------------------------
     # Header/cookie matches are candidate secrets like any other (the
@@ -173,8 +193,8 @@ def run(out_dir: Path, expected: int = EXPECTED_SECRETS) -> dict:
         ],
         "ruled_out": [
             {"raw": s.raw.decode("utf-8", errors="replace"), "url": s.url,
-             "how_found": s.how_found, "reason": s.ruled_out}
-            for s in ruled_out
+             "sha256": s.sha256, "how_found": s.how_found, "reason": s.ruled_out}
+            for s in _dedup_ruled_out(ruled_out)
         ],
         "divergences": divergences,
         "unhandled_types": sorted(set(unhandled)),
@@ -284,6 +304,26 @@ def _route(s: Sighting, strict: dict, needs_review: list,
         strict[s.canonical].append(s)
     else:
         needs_review.append(s)
+
+
+def _dedup_ruled_out(ruled_out: list) -> list:
+    """Collapse ruled-out rulings repeated across corpora and slash variants.
+
+    The same worked-example / format-prose string on / and /index.html is
+    extracted from raw, rendered, and interacted snapshots — one ruling
+    ballooning into many rows. Key on (raw string, body sha256): one row per
+    unique ruled-out value per unique body, mirroring the filter-gateway
+    canon-key dedup. Corpus/provenance multiplicity is noise here, not signal.
+    """
+    seen: set[tuple] = set()
+    out: list = []
+    for s in ruled_out:
+        key = (s.raw, s.sha256)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    return out
 
 
 def _write_report(out_dir: Path, r: dict) -> None:

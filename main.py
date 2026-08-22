@@ -222,6 +222,9 @@ def main() -> int:
                         exp = browser.expand(result.final_url)
                         if exp.ok:
                             record["rendered_sha256"] = store.put(exp.rendered_html)
+                            if exp.interacted_html:
+                                record["interacted_sha256"] = store.put(exp.interacted_html)
+                                record["clicks"] = exp.clicks
                             record["idle_timeout"] = exp.idle_timeout
                             if exp.late_mutations:
                                 record["late_mutations"] = exp.late_mutations
@@ -239,10 +242,12 @@ def main() -> int:
                                     new_edges += 1
                                     log.debug("    + %-14s %s", d.how, d.verbatim)
                             log.info("  expanded: %d URLs discovered (%d new), "
-                                     "shadow=%d closed=%d late_mut=%d idle_to=%s interactives=%d",
+                                     "shadow=%d closed=%d late_mut=%d idle_to=%s "
+                                     "interactives=%d clicks=%d",
                                      len(exp.discovered), new_edges, exp.shadow_root_count,
                                      exp.closed_shadow_roots, exp.late_mutations,
-                                     exp.idle_timeout, exp.unexplained_interactives)
+                                     exp.idle_timeout, exp.unexplained_interactives,
+                                     exp.clicks)
                         else:
                             log.warning("  expand failed: %s", exp.error)
                             record["expand_error"] = exp.error

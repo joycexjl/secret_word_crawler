@@ -47,9 +47,11 @@ _EXT_EXPECT = {
 
 
 def is_blocked_notice(status: int, body: bytes) -> bool:
-    """A 200 whose body matches a policy-block/interstitial pattern."""
-    if status != 200:
-        return False
+    """A response whose body matches a policy-block/interstitial pattern.
+
+    Status-agnostic: the geo-gated page answers 403 with a 'only visible to'
+    body — that IS the block, and CONTEXT.md counts it as fetched + flagged
+    blocked_notice. Gating on 200 would exclude the canonical case."""
     try:
         text = body.decode("utf-8", errors="replace")
     except Exception:
