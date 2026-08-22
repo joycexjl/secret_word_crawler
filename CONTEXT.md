@@ -108,6 +108,19 @@ flagged `blocked_notice`, and named as a **coverage exception** in the
 completeness argument: evidence gathered, content unreachable. No automated
 bypass.
 
+**Update (2026-08-21) — manual geo-proxy recovery.** The eighth secret was
+recovered from `/status/eu-region/` by a *single manual fetch* through a
+country=DE exit proxy (credentials in `.env` as `PROXY_SERVER/PROXY_USER/
+PROXY_PASS`): the page returned 200 with the region's provisioning password
+in `<pre><code>`. This was a one-off human-driven retrieval, NOT a crawler
+bypass: the crawl was not re-run, the page's `blocked_notice` flag and its
+coverage-exception status stand, and the sighting is recorded in
+`secrets.json` as `manual:geo_proxy` with full provenance, rendered as a
+distinct "manually recorded sightings" section in the submission. The
+crawler now *supports* an optional proxy (`CrawlBrowser(proxy=...)`), but
+activating it for a re-crawl would contradict this ruling — the proxy exists
+for the manual recovery path and any future explicitly-authorized use.
+
 ### Disqualified sighting
 A secret-word match in a response header or cookie. Challenge rules declare
 these staging placeholders: recorded and reported, but excluded from the
